@@ -17,6 +17,8 @@ export default function AdminView() {
   const [success, setSuccess] = useState('');
   const [participantEmail, setParticipantEmail] = useState('');
   const [participantName, setParticipantName] = useState('');
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvResult, setCsvResult] = useState(null);
 
   const createEvent = async (e) => {
     e.preventDefault();
@@ -193,6 +195,44 @@ export default function AdminView() {
     alert(' Event ID copied!');
   };
 
+  const handleCsvUpload = async () => {
+    if (!csvFile) return;
+    
+    setLoading(true);
+    setError('');
+    setCsvResult(null);
+
+    try {
+      const text = await csvFile.text();
+      
+      const response = await fetch(
+        `${API_URL}/admin/events/${eventId}/participants/bulk`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ csvData: text })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error);
+      }
+
+      setCsvResult(data);
+      setCsvFile(null);
+      setSuccess(`CSV upload complete: ${data.added} added, ${data.skipped} skipped`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!token || !isAuthenticated) {
     return (
       <div>
@@ -354,6 +394,63 @@ export default function AdminView() {
               {loading ? <span className="loading">Loading...</span> : ' Add Participant'}
             </button>
           </form>
+
+          <div className="divider"><span>Add Participants via CSV</span></div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <div className="info-box">
+              Upload a CSV file with two columns: name,email (one participant per row)
+              <div style={{ marginTop: '8px' }}>
+                <a 
+                  href="data:text/csv;charset=utf-8,name%2Cemail%0AAlice%20Smith%2Calice%40example.com%0ABob%20Johnson%2Cbob%40example.com%0ACharlie%20Brown%2Ccharlie%40example.com"
+                  download="sample_participants.csv"
+                  style={{ color: '#7C4DFF', textDecoration: 'underline', cursor: 'pointer' }}
+                >
+                  Download sample CSV template
+                </a>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="csvFile">Choose CSV File</label>
+              <input
+                id="csvFile"
+                type="file"
+                accept=".csv"
+                onChange={(e) => setCsvFile(e.target.files[0])}
+              />
+            </div>
+
+            <button 
+              onClick={handleCsvUpload}
+              disabled={!csvFile || loading}
+              style={{ background: '#4caf50' }}
+            >
+              {loading ? <span className="loading">Loading...</span> : ' Upload CSV'}
+            </button>
+
+            {csvResult && (
+              <div className="info-box" style={{ marginTop: '15px', background: '#e8f5e9' }}>
+                <strong>Upload Results:</strong>
+                <div style={{ marginTop: '8px' }}>
+                  Added: {csvResult.added} | Skipped: {csvResult.skipped}
+                </div>
+                {csvResult.duplicates && csvResult.duplicates.length > 0 && (
+                  <div style={{ marginTop: '8px' }}>
+                    <strong>Duplicates:</strong> {csvResult.duplicates.join(', ')}
+                  </div>
+                )}
+                {csvResult.errors && csvResult.errors.length > 0 && (
+                  <div style={{ marginTop: '8px', color: '#d32f2f' }}>
+                    <strong>Errors:</strong>
+                    {csvResult.errors.map((err, i) => (
+                      <div key={i}>Line {err.line}: {err.error}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="divider"><span>Finalize</span></div>
 

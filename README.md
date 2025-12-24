@@ -11,7 +11,8 @@ Why this project exists
 - Ensures fair assignments (no self-assignments) with a provably correct shuffle.
 
 Key features
-- Organizer workflow: Create events (name, optional date, optional max budget, short description), add participants, and finalize assignments. Organizers manage events using a short organizer token.
+- Organizer workflow: Create events (name, optional date, optional max budget, short description), add participants individually or via CSV bulk upload, and finalize assignments. Organizers manage events using a short organizer token.
+- Bulk participant import: Upload a CSV file with participant names and emails to add multiple participants at once. Download a sample CSV template directly from the admin interface.
 - Participant workflow: Participants log in with their email and the Event ID to receive a Secret ID, Public ID, and their anonymous assignment.
 - Privacy model: The system uses independent Secret and Public IDs to prevent identity leakage. Secret IDs remain private to participants and are never exposed to other users.
 - Email handling: Participant emails are stored as bcrypt hashes; the server verifies logins by comparing plaintext emails with stored bcrypt hashes. Plaintext emails are not stored in the database.

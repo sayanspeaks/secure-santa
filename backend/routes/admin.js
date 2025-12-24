@@ -100,6 +100,126 @@ adminRoutes.post('/events/:eventId/participants', authenticateOrganizer, async (
 });
 
 /**
+ * Bulk add participants from CSV
+ * POST /api/admin/events/:eventId/participants/bulk
+ * Headers: { Authorization: organizerToken }
+ * Body: { csvData: string } - CSV format: name,email (one per line)
+ */
+adminRoutes.post('/events/:eventId/participants/bulk', authenticateOrganizer, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { csvData } = req.body;
+
+    if (!csvData) {
+      return res.status(400).json({ error: 'CSV data is required' });
+    }
+
+    const db = getDatabase();
+    const lines = csvData.split('\n').map(line => line.trim()).filter(line => line);
+    
+    // Remove header if present (check if first line contains 'name' and 'email')
+    let dataLines = lines;
+    if (lines.length > 0 && lines[0].toLowerCase().includes('name') && lines[0].toLowerCase().includes('email')) {
+      dataLines = lines.slice(1);
+    }
+
+    const participants = [];
+    const errors = [];
+    
+    // Parse CSV rows
+    for (let i = 0; i < dataLines.length; i++) {
+      const line = dataLines[i];
+      const parts = line.split(',').map(p => p.trim());
+      
+      if (parts.length !== 2) {
+        errors.push({ line: i + 1, error: 'Invalid format - expected name,email' });
+        continue;
+      }
+      
+      const [name, email] = parts;
+      if (!name || !email) {
+        errors.push({ line: i + 1, error: 'Name and email cannot be empty' });
+        continue;
+      }
+      
+      participants.push({ name, email });
+    }
+
+    if (participants.length === 0) {
+      return res.status(400).json({ error: 'No valid participants found in CSV', errors });
+    }
+
+    // Fetch existing email hashes for duplicate detection
+    const existing = await db.query('SELECT email FROM participants WHERE event_id = $1', [eventId]);
+    const existingHashes = existing.rows.map(row => row.email);
+
+    const added = [];
+    const duplicates = [];
+    const saltRounds = 10;
+
+    // Start transaction
+    await db.query('BEGIN');
+
+    try {
+      for (const participant of participants) {
+        // Check for duplicates
+        let isDuplicate = false;
+        for (const hash of existingHashes) {
+          try {
+            const match = await bcrypt.compare(String(participant.email), hash);
+            if (match) {
+              isDuplicate = true;
+              duplicates.push(participant.email);
+              break;
+            }
+          } catch (e) {
+            console.error('Error comparing email hash:', e);
+          }
+        }
+
+        if (isDuplicate) continue;
+
+        // Also check against already-added in this batch
+        const alreadyInBatch = added.find(p => p.email === participant.email);
+        if (alreadyInBatch) {
+          duplicates.push(participant.email);
+          continue;
+        }
+
+        // Hash email and insert
+        const secretId = generateSecretId();
+        const publicId = generatePublicId();
+        const hashedEmail = await bcrypt.hash(String(participant.email), saltRounds);
+
+        await db.query(
+          'INSERT INTO participants (real_name, email, event_id, secret_id, public_id) VALUES ($1, $2, $3, $4, $5)',
+          [participant.name, hashedEmail, eventId, secretId, publicId]
+        );
+
+        added.push(participant);
+        existingHashes.push(hashedEmail); // Update for subsequent checks
+      }
+
+      await db.query('COMMIT');
+
+      res.json({
+        message: 'Bulk upload completed',
+        added: added.length,
+        skipped: duplicates.length,
+        duplicates,
+        errors
+      });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error bulk adding participants:', error);
+    res.status(500).json({ error: 'Failed to bulk add participants' });
+  }
+});
+
+/**
  * Finalize assignments for an event
  * POST /api/admin/events/:eventId/finalize
  * Headers: { Authorization: organizerToken }
@@ -110,7 +230,7 @@ adminRoutes.post('/events/:eventId/finalize', authenticateOrganizer, (req, res) 
     const db = getDatabase();
 
     // Get all participants for this event
-    db.query('SELECT * FROM participants', (err, result) => {
+    db.query('SELECT * FROM participants WHERE event_id = $1', [eventId], (err, result) => {
       if (err) {
         console.error('Error fetching participants:', err);
         return res.status(500).json({ error: 'Failed to finalize assignments' });
